@@ -125,12 +125,17 @@ This repo includes `.github/workflows/build-apk.yml`.
 2. Wait for the run to finish. The first build takes about 20–30 minutes; later runs are faster because the cache is reused.
 3. Download the **g2-imei-generator-apk** artifact from the run page and unzip it. You'll get `g2imeigen-1.3.0-arm64-v8a_armeabi-v7a-debug.apk`.
 
+If the GitHub build fails, open the failed run, expand **Build debug APK** and scroll up from
+the red "Buildozer failed" box; the real error is above the environment dump. The workflow
+uses Node 24 actions and builds on Ubuntu 24.04 (see the comment at the top of
+`.github/workflows/build-apk.yml` to build on Ubuntu 26.04 instead).
+
 #### Option B: Linux / WSL2 (recommended for local builds)
 
 ```bash
 sudo apt update
 sudo apt install -y python3 python3-pip python3-venv git zip unzip openjdk-17-jdk \
-    autoconf automake libtool pkg-config zlib1g-dev libncurses-dev cmake libffi-dev libssl-dev
+    autoconf automake libtool libltdl-dev pkg-config zlib1g-dev libncurses-dev cmake libffi-dev libssl-dev
 
 git clone https://github.com/G33l0/imei-generator.git
 cd imei-generator
