@@ -2,7 +2,7 @@
 
 A minimal Android application that generates checksum-valid IMEI numbers for eSIM-capable iPhone models. Built with Kivy and packaged as an APK using Buildozer.
 
-**Built by [IamG2](https://github.com/IamG2).**
+**Built by [IamG2](https://github.com/G33l0/IamG2).**
 
 ---
 
