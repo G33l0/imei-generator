@@ -63,6 +63,26 @@ class TacDB:
         rows = [(m, t.split(",")) for m, t in self.con.execute(sql, args)]
         return rows[:limit], len(rows) > limit
 
+    def search_all(self, query, limit=MAX_LIST):
+        """Search models across every brand.
+
+        Returns (rows, truncated) where rows is [(brand, model, [tacs])].
+        Matches brand, model, alias or TAC prefix; every word must match.
+        """
+        words = [w for w in (query or "").replace("%", "").replace("_", "").split() if w]
+        if not words:
+            return [], False
+        sql = "SELECT brand, model, group_concat(tac) FROM tac WHERE 1=1"
+        args = []
+        for w in words:
+            sql += " AND (brand LIKE ? OR model LIKE ? OR aka LIKE ? OR tac LIKE ?)"
+            like = "%" + w + "%"
+            args += [like, like, like, w + "%"]
+        sql += " GROUP BY brand, model ORDER BY brand COLLATE NOCASE, model COLLATE NOCASE LIMIT ?"
+        args.append(limit + 1)
+        rows = [(b, m, t.split(",")) for b, m, t in self.con.execute(sql, args)]
+        return rows[:limit], len(rows) > limit
+
     def esim_models(self):
         return [(m, t.split(",")) for m, t in self.con.execute(
             "SELECT model, group_concat(tac) FROM tac WHERE esim = 1"

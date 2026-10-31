@@ -25,15 +25,27 @@ or to pretend to be a real device, is illegal in most countries.
 
 ## Features
 
+**Generate**
 - **Embedded TAC database** (`data/tac.sqlite`, about 2 MB). Works fully offline and is bundled inside the APK.
 - Three sources:
-  - **eSIM iPhones**: verified Apple TACs for eSIM models (XR / XS / 11 and later / SE 2nd and 3rd gen)
-  - **All brands**: pick any brand, search models by name or TAC prefix
+  - **eSIM iPhone**: verified Apple TACs for eSIM models (XR / XS / 11 and later / SE 2nd and 3rd gen)
+  - **Database**: pick a brand, or choose **Any brand** to search every brand at once (for example "galaxy s9", "iphone" or a TAC prefix)
   - **Custom TAC**: any 8-digit TAC, labelled with its device name if the TAC is known
-- **Batch generation** of 1 to 1000 IMEIs, all different within a batch. Uses a cryptographically secure RNG.
-- **Copy** to the clipboard, and **Share** through the Android share sheet (Drive, email, Notes and so on), or **Save CSV** on desktop
-- **Check & Lookup** tab: says whether any IMEI is valid (spaces and dashes are fine) and shows which device a TAC belongs to. The app never shows how it verifies numbers; messages are just "Valid IMEI" or "Invalid IMEI"
-- Also works from the command line: `python imei_generator.py 35104463 10`
+- **Favourites**: tap the star next to a model or TAC. Favourites appear as one-tap chips above the generator.
+- **Batch generation** of 1 to 1000 IMEIs, all different within a batch, using a cryptographically secure RNG. Use the − / + stepper or the **1 · 10 · 50 · 100** shortcut chips.
+- **Copy formats**: one per line, CSV (`imei,tac,model`), JSON array, quoted list (`'…', '…'`) or comma list. **Copy**, **Share** (Android share sheet) and **Save** (desktop) all use the format you pick. Tap any single row to copy just that IMEI.
+
+**History**
+- Every batch is saved on the device (the most recent 100). Tap a batch to open it again, copy it in the current format, or delete it.
+
+**Check**
+- **Single**: says whether an IMEI is valid (spaces and dashes are fine) and shows the device for its TAC. **Paste** checks the clipboard straight away.
+- **Bulk**: paste a list (one per line, or separated by commas, semicolons or tabs; JSON and quoted lists work too). You get a count of valid and invalid entries, each number with its device, **Copy valid** / **Copy invalid**, and a CSV report to share. Up to 5,000 entries per check.
+- The app never shows how it verifies numbers. Messages are just "Valid IMEI" or "Invalid IMEI".
+
+**Remembers your setup**: the last tab, source, brand, search, model, custom TAC, quantity, copy format and Check mode are restored when you reopen the app.
+
+Also works from the command line: `python imei_generator.py 35104463 10`
 
 ---
 
@@ -111,7 +123,7 @@ This repo includes `.github/workflows/build-apk.yml`.
 
 1. Push to `main` (or open **Actions → Build APK → Run workflow**).
 2. Wait for the run to finish. The first build takes about 20–30 minutes; later runs are faster because the cache is reused.
-3. Download the **g2-imei-generator-apk** artifact from the run page and unzip it. You'll get `g2imeigen-1.2.0-arm64-v8a_armeabi-v7a-debug.apk`.
+3. Download the **g2-imei-generator-apk** artifact from the run page and unzip it. You'll get `g2imeigen-1.3.0-arm64-v8a_armeabi-v7a-debug.apk`.
 
 #### Option B: Linux / WSL2 (recommended for local builds)
 
@@ -147,21 +159,52 @@ from the Actions page.
 
 ### 4. Check that the database is embedded
 
-Open the app, go to **Check & Lookup**, and look at the footer. It should say
+Open the app, go to **Check → Single**, and look at the footer. It should say
 `Database: 22,524 TACs …`. If it says `[database not loaded …]`, the APK was built
 without `data/tac.sqlite`. Check that the file exists and that `sqlite` is still listed in
 `source.include_exts`. Even then the app keeps working, using a small built-in fallback list.
 
-### Release build (signed APK)
+### Signed releases (automatic, via GitHub Actions)
+
+Push a version tag and GitHub builds a **signed** APK and publishes it on the repo's
+**Releases** page with a SHA-256 checksum. The app version is taken from the tag.
+
+**One-time setup:**
+
+1. Create a signing key on your computer. Keep this file and its passwords safe: every
+   future update must be signed with the same key, or phones will refuse to install it.
+   ```bash
+   keytool -genkey -v -keystore release.keystore -alias g2imei -keyalg RSA -keysize 2048 -validity 10000
+   base64 -w0 release.keystore > release.keystore.b64      # macOS: base64 -i release.keystore
+   ```
+2. In GitHub go to **Settings → Secrets and variables → Actions → New repository secret** and add:
+
+   | Secret                       | Value                                   |
+   |------------------------------|-----------------------------------------|
+   | `ANDROID_KEYSTORE_BASE64`    | contents of `release.keystore.b64`      |
+   | `ANDROID_KEY_ALIAS`          | `g2imei` (the alias you chose)          |
+   | `ANDROID_KEYSTORE_PASSWORD`  | the keystore password                   |
+   | `ANDROID_KEY_PASSWORD`       | the key password (often the same)       |
+
+**Each release:**
 
 ```bash
-keytool -genkey -v -keystore release.keystore -alias imeigen -keyalg RSA -keysize 2048 -validity 10000
-export P4A_RELEASE_KEYSTORE=$PWD/release.keystore P4A_RELEASE_KEYALIAS=imeigen
+git tag v1.3.0
+git push origin v1.3.0
+```
+
+When the workflow finishes, **Releases → v1.3.0** has `g2imeigen-1.3.0-…-release.apk` and its
+`.sha256` file. If the secrets are missing, the job stops with a message saying which ones to add.
+
+**Signing locally instead:**
+
+```bash
+export P4A_RELEASE_KEYSTORE=$PWD/release.keystore P4A_RELEASE_KEYALIAS=g2imei
 export P4A_RELEASE_KEYSTORE_PASSWD=... P4A_RELEASE_KEYALIAS_PASSWD=...
 buildozer android release
 ```
 
-Never commit the keystore. `*.keystore` is in `.gitignore`.
+Never commit the keystore or the `.b64` file. `*.keystore` and `*.b64` are in `.gitignore`.
 
 ---
 
@@ -170,15 +213,18 @@ Never commit the keystore. `*.keystore` is in `.gitignore`.
 ```bash
 pip install kivy==2.3.1
 python main.py                              # desktop window
-python -m unittest discover -s tests -v     # tests: Luhn, generation, DB
+python -m unittest discover -s tests -v     # tests: generation, DB, formats, bulk, user data
 python imei_generator.py 35104463 5         # CLI: 5 IMEIs for TAC 35104463
 ```
 
 ## Project layout
 
 ```
-main.py               Kivy UI (Generate + Check & Lookup), black/gold theme
-imei_generator.py     Luhn, validation, batch generation (no Kivy dependency)
+main.py               app logic (Generate, Check, History)
+g2.kv                 layout and black/gold styling
+imei_generator.py     validation and batch generation (no Kivy dependency)
+exporters.py          copy/share formats, bulk-check parsing and reports
+userdata.py           on-device settings, favourites and history (SQLite)
 tacdb.py              read-only access to data/tac.sqlite (with built-in fallback)
 data/tac.sqlite       embedded TAC database (generated, committed)
 data/tac_extra.csv    your own verified TACs, merged at build time
@@ -194,4 +240,4 @@ buildozer.spec        Android build config
 `data/tac.sqlite` is built from the Osmocom TAC database and is licensed under
 **CC-BY-SA 3.0** (© Harald Welte and contributors). If you redistribute the database or the
 APK, keep this attribution and share changes to the database under the same license. The
-app shows this attribution on the Check & Lookup tab.
+app shows this attribution on the Check tab.

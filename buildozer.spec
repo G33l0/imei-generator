@@ -9,7 +9,7 @@ source.dir = .
 source.include_exts = py,png,jpg,kv,atlas,ttf,otf,sqlite
 source.include_patterns = data/tac.sqlite
 source.exclude_dirs = tests, tools, docs, bin, .buildozer, .github, .venv, venv, __pycache__
-version = 1.2.0
+version = 1.3.0
 # sqlite3 recipe is needed for Python's sqlite3 module on Android.
 requirements = python3,kivy==2.3.1,sqlite3
 orientation = portrait
