@@ -667,9 +667,8 @@ def escape(text):
 
 
 def format_imei(imei):
-    """TAC in gold, serial in ivory, check digit muted -- shows the structure."""
-    return "[color=#%s]%s[/color] %s [color=#%s]%s[/color]" % (
-        GOLD, imei[:8], imei[8:14], MUTED, imei[14:])
+    """TAC (device type) in gold, the rest in ivory."""
+    return "[color=#%s]%s[/color] %s" % (GOLD, imei[:8], imei[8:])
 
 
 def plural(n, word):

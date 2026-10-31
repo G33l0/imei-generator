@@ -21,16 +21,23 @@ class LuhnTests(unittest.TestCase):
     def test_rejects_bad_check_digit(self):
         ok, msg = g.validate_imei("490154203237519")
         self.assertFalse(ok)
-        self.assertIn("8", msg)
+        self.assertEqual(msg, "Invalid IMEI")
 
     def test_accepts_formatted_input(self):
         self.assertTrue(g.validate_imei("49-015420-323751-8")[0])
         self.assertTrue(g.validate_imei(" 49 015420 323751 8 ")[0])
 
-    def test_14_digit_hint(self):
+    def test_wrong_length(self):
         ok, msg = g.validate_imei("49015420323751")
         self.assertFalse(ok)
-        self.assertIn("should be 8", msg)
+        self.assertIn("15 digits", msg)
+
+    def test_messages_do_not_reveal_method(self):
+        samples = ["490154203237518", "490154203237519", "49015420323751", "4901X", ""]
+        for s in samples:
+            msg = g.validate_imei(s)[1].lower()
+            for word in ("luhn", "checksum", "check digit", "should be", "mod"):
+                self.assertNotIn(word, msg, (s, msg))
 
     def test_rejects_non_digits(self):
         self.assertFalse(g.validate_imei("49015420323751X")[0])

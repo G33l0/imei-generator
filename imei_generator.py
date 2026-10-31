@@ -39,18 +39,19 @@ def is_valid_tac(tac):
 
 
 def validate_imei(imei):
-    """Return (ok, message) for a 15-digit IMEI (14-digit IMEIs get a hint)."""
+    """Return (ok, message) for an IMEI.
+
+    Messages are deliberately neutral: they are shown in the app and must not
+    reveal how numbers are verified (no algorithm name, no expected digit).
+    """
     imei = normalize(imei)
     if not imei.isdigit():
-        return False, "IMEI must contain digits only"
-    if len(imei) == IMEI_LENGTH - 1:
-        return False, "14 digits: check digit missing, it should be %d" % luhn_check_digit(imei)
+        return False, "Digits only, please"
     if len(imei) != IMEI_LENGTH:
-        return False, "IMEI must be 15 digits (got %d)" % len(imei)
-    expected = luhn_check_digit(imei[:-1])
-    if int(imei[-1]) != expected:
-        return False, "Luhn check failed: last digit should be %d" % expected
-    return True, "Valid (Luhn checksum OK)"
+        return False, "An IMEI has 15 digits (this has %d)" % len(imei)
+    if int(imei[-1]) != luhn_check_digit(imei[:-1]):
+        return False, "Invalid IMEI"
+    return True, "Valid IMEI"
 
 
 def generate_imei(tac):
