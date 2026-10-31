@@ -1,0 +1,10 @@
+# Your own verified TACs, merged on top of the Osmocom database by
+# tools/build_tac_db.py (a row here overrides an Osmocom row with the same TAC).
+#
+# Only add TACs you have verified, e.g. the first 8 digits of the IMEI shown
+# under Settings > General > About on a test device you own.
+# esim: 1 = list under "eSIM iPhones", 0 = don't, empty = auto-detect from model.
+#
+# Example:
+# 35XXXXXX,Apple,iPhone 15,A3090,1
+tac,brand,model,aka,esim

@@ -1,0 +1,9 @@
+.buildozer/
+bin/
+__pycache__/
+*.pyc
+.venv/
+venv/
+data/*.tmp
+*.keystore
+*.b64

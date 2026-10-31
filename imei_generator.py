@@ -1,38 +1,100 @@
-# imei_generator.py
-import random
+"""Core IMEI maths: Luhn check digit, validation and test-IMEI generation.
 
-def luhn_checksum(number_str):
-    """Calculate the Luhn checksum."""
-    def digits_of(n):
-        return [int(d) for d in str(n)]
-    
-    digits = digits_of(number_str)
-    odd_digits = digits[-1::-2]
-    even_digits = digits[-2::-2]
-    
-    checksum = sum(odd_digits)
-    for d in even_digits:
-        checksum += sum(digits_of(d * 2))
-    
-    return checksum % 10
+Pure Python, no Kivy dependency, so it can be unit-tested and reused from the
+command line:  python imei_generator.py 35104463 5
+"""
+import secrets
 
-def generate_imei_with_tac(tac_prefix):
+IMEI_LENGTH = 15
+TAC_LENGTH = 8
+SNR_LENGTH = 6
+MAX_BATCH = 1000
+
+_rng = secrets.SystemRandom()
+
+
+def luhn_check_digit(payload):
+    """Return the Luhn check digit (0-9) for a string of digits."""
+    if not payload or not payload.isdigit():
+        raise ValueError("Luhn payload must be a non-empty string of digits")
+    total = 0
+    # Walk from the right; the digit next to the (future) check digit is doubled.
+    for i, ch in enumerate(reversed(payload)):
+        d = int(ch)
+        if i % 2 == 0:
+            d *= 2
+            if d > 9:
+                d -= 9
+        total += d
+    return (10 - total % 10) % 10
+
+
+def normalize(text):
+    """Strip spaces, dashes and slashes users commonly paste with an IMEI."""
+    return "".join(ch for ch in (text or "") if ch not in " -/.\t\r\n")
+
+
+def is_valid_tac(tac):
+    return isinstance(tac, str) and len(tac) == TAC_LENGTH and tac.isdigit()
+
+
+def validate_imei(imei):
+    """Return (ok, message) for an IMEI.
+
+    Messages are deliberately neutral: they are shown in the app and must not
+    reveal how numbers are verified (no algorithm name, no expected digit).
     """
-    Generate a full 15-digit IMEI from an 8-digit TAC prefix.
-    Digits 9-14 are a random serial number (SNR).
-    Digit 15 is the Luhn check digit.
-    """
-    if len(tac_prefix) != 8 or not tac_prefix.isdigit():
-        raise ValueError("TAC prefix must be an 8-digit numeric string")
-    
-    snr = ''.join([str(random.randint(0, 9)) for _ in range(6)])
-    imei_base = tac_prefix + snr
-    checksum = luhn_checksum(imei_base + '0')
-    check_digit = (10 - checksum) % 10
-    
-    return imei_base + str(check_digit)
+    imei = normalize(imei)
+    if not imei.isdigit():
+        return False, "Digits only, please"
+    if len(imei) != IMEI_LENGTH:
+        return False, "An IMEI has 15 digits (this has %d)" % len(imei)
+    if int(imei[-1]) != luhn_check_digit(imei[:-1]):
+        return False, "Invalid IMEI"
+    return True, "Valid IMEI"
 
-# Test
+
+def generate_imei(tac):
+    """Generate one 15-digit Luhn-valid IMEI starting with an 8-digit TAC."""
+    tac = normalize(tac)
+    if not is_valid_tac(tac):
+        raise ValueError("TAC must be exactly 8 digits")
+    snr = "".join(str(_rng.randrange(10)) for _ in range(SNR_LENGTH))
+    base = tac + snr
+    return base + str(luhn_check_digit(base))
+
+
+def generate_batch(tacs, count):
+    """Generate `count` unique IMEIs, picking a random TAC from `tacs` for each.
+
+    Returns a list of (imei, tac) tuples.
+    """
+    tacs = [normalize(t) for t in (tacs if isinstance(tacs, (list, tuple)) else [tacs])]
+    if not tacs:
+        raise ValueError("No TAC available")
+    for t in tacs:
+        if not is_valid_tac(t):
+            raise ValueError("Invalid TAC %r: must be exactly 8 digits" % t)
+    if not 1 <= count <= MAX_BATCH:
+        raise ValueError("Quantity must be between 1 and %d" % MAX_BATCH)
+    seen, out = set(), []
+    while len(out) < count:
+        tac = _rng.choice(tacs)
+        imei = generate_imei(tac)
+        if imei not in seen:
+            seen.add(imei)
+            out.append((imei, tac))
+    return out
+
+
+# Backwards-compatible name used by the original version of the app.
+generate_imei_with_tac = generate_imei
+
+
 if __name__ == "__main__":
-    iphone_xr_tac = "35084958"  # Example iPhone XR TAC
-    print(f"Test iPhone XR IMEI: {generate_imei_with_tac(iphone_xr_tac)}")
+    import sys
+
+    tac_arg = sys.argv[1] if len(sys.argv) > 1 else "35104463"  # iPhone 13 (Osmocom)
+    n = int(sys.argv[2]) if len(sys.argv) > 2 else 1
+    for imei, _ in generate_batch([tac_arg], n):
+        print(imei)
