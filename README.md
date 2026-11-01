@@ -133,7 +133,10 @@ uses Node 24 actions and builds on Ubuntu 24.04 (see the comment at the top of
 **Build notes.** `buildozer.spec` pins python-for-android to `v2026.05.09` and uses a small
 Kivy recipe override in `p4a-recipes/kivy/`. The override removes Kivy's unused `requests`
 dependency, whose Android-only `charset-normalizer` wheel otherwise stops the build with
-"*…android_24_arm64_v8a.whl is not a supported wheel on this platform*". Keep both settings
+"*…android_24_arm64_v8a.whl is not a supported wheel on this platform*". A second fix,
+`tools/pip-constraints.txt` (used as `PIP_CONSTRAINT`), keeps pip at the version bundled with
+python-for-android, so its venv isn't left half-upgraded when it builds the second CPU type
+("*ImportError: cannot import name 'BuildDependencyInstallError'*"). Keep all three settings
 when changing the build.
 
 #### Option B: Linux / WSL2 (recommended for local builds)
@@ -151,6 +154,7 @@ pip install --upgrade pip setuptools wheel
 pip install buildozer "cython<3"
 
 python -m unittest discover -s tests       # optional sanity check
+export PIP_CONSTRAINT=$PWD/tools/pip-constraints.txt   # see build notes
 buildozer -v android debug                 # first run downloads the SDK/NDK (~3 GB)
 ```
 

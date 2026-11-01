@@ -41,6 +41,12 @@ class BuildConfigTests(unittest.TestCase):
                 deps = ast.literal_eval(node.value)
         self.assertEqual(deps, ["filetype"])
 
+    def test_pip_constraint_wired_into_ci(self):
+        constraints = open(os.path.join(ROOT, "tools", "pip-constraints.txt")).read()
+        self.assertIn("pip==25.3", constraints)
+        wf = open(os.path.join(ROOT, ".github", "workflows", "build-apk.yml")).read()
+        self.assertEqual(wf.count("PIP_CONSTRAINT: ${{ github.workspace }}/tools/pip-constraints.txt"), 2)
+
 
 if __name__ == "__main__":
     unittest.main()
