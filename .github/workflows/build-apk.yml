@@ -4,8 +4,20 @@ on:
   push:
     branches: [main, master]
     tags: ["v*"]
+    paths-ignore: ["**.md", "docs/**"]
   pull_request:
+    paths-ignore: ["**.md", "docs/**"]
   workflow_dispatch:
+
+# Least privilege by default; the release job asks for write access itself.
+permissions:
+  contents: read
+
+# A newer push to the same branch/PR cancels the older, now pointless build.
+# Tag (release) builds always run to completion.
+concurrency:
+  group: build-apk-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 # All actions below run on Node.js 24 (Node 20 is deprecated on GitHub runners).
 #
@@ -60,13 +72,21 @@ jobs:
           python -m pip install --upgrade pip setuptools wheel
           pip install buildozer "cython<3"
 
-      - name: Cache Buildozer
+      # Android SDK/NDK downloads: safe to reuse from an older key.
+      - name: Cache Android SDK/NDK
         uses: actions/cache@v5
         with:
-          path: |
-            ~/.buildozer
-            .buildozer
-          key: buildozer-v2-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
+          path: ~/.buildozer
+          key: buildozer-sdk-v1-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
+          restore-keys: buildozer-sdk-v1-${{ runner.os }}-
+
+      # Compiled recipes: must be rebuilt whenever anything that shapes them
+      # changes, so no partial restore here.
+      - name: Cache compiled recipes
+        uses: actions/cache@v5
+        with:
+          path: .buildozer
+          key: buildozer-build-v1-${{ runner.os }}-${{ hashFiles('buildozer.spec', 'p4a-recipes/**', 'tools/pip-constraints.txt') }}
 
       - name: Check embedded TAC database
         run: |
@@ -115,13 +135,21 @@ jobs:
           python -m pip install --upgrade pip setuptools wheel
           pip install buildozer "cython<3"
 
-      - name: Cache Buildozer
+      # Android SDK/NDK downloads: safe to reuse from an older key.
+      - name: Cache Android SDK/NDK
         uses: actions/cache@v5
         with:
-          path: |
-            ~/.buildozer
-            .buildozer
-          key: buildozer-v2-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
+          path: ~/.buildozer
+          key: buildozer-sdk-v1-${{ runner.os }}-${{ hashFiles('buildozer.spec') }}
+          restore-keys: buildozer-sdk-v1-${{ runner.os }}-
+
+      # Compiled recipes: must be rebuilt whenever anything that shapes them
+      # changes, so no partial restore here.
+      - name: Cache compiled recipes
+        uses: actions/cache@v5
+        with:
+          path: .buildozer
+          key: buildozer-build-v1-${{ runner.os }}-${{ hashFiles('buildozer.spec', 'p4a-recipes/**', 'tools/pip-constraints.txt') }}
 
       - name: Set app version from tag
         run: |

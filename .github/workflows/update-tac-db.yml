@@ -1,0 +1,51 @@
+name: Update TAC database
+
+# Keeps data/tac.sqlite and data/tac_manifest.json current on main. The app
+# checks the manifest on startup and downloads the database when its data
+# changes (dbupdate.py), so phones get new TACs without reinstalling.
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"          # weekly, Monday 03:17 UTC
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - data/tac_extra.csv          # your own verified TACs
+      - tools/build_tac_db.py
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-tac-db
+  cancel-in-progress: false
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Rebuild database (keeps the file if the data is identical)
+        run: python tools/build_tac_db.py --keep-if-unchanged
+
+      - name: Unit tests
+        run: python -m unittest discover -s tests
+
+      - name: Commit and push if the data changed
+        run: |
+          if git diff --quiet -- data/tac.sqlite data/tac_manifest.json; then
+            echo "TAC data unchanged; nothing to publish."
+            exit 0
+          fi
+          COUNT=$(python -c "import json;print(json.load(open('data/tac_manifest.json'))['count'])")
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/tac.sqlite data/tac_manifest.json
+          git commit -m "Update TAC database: ${COUNT} TACs ($(date -u +%F))"
+          git push
