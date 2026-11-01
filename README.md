@@ -130,6 +130,12 @@ the red "Buildozer failed" box; the real error is above the environment dump. Th
 uses Node 24 actions and builds on Ubuntu 24.04 (see the comment at the top of
 `.github/workflows/build-apk.yml` to build on Ubuntu 26.04 instead).
 
+**Build notes.** `buildozer.spec` pins python-for-android to `v2026.05.09` and uses a small
+Kivy recipe override in `p4a-recipes/kivy/`. The override removes Kivy's unused `requests`
+dependency, whose Android-only `charset-normalizer` wheel otherwise stops the build with
+"*…android_24_arm64_v8a.whl is not a supported wheel on this platform*". Keep both settings
+when changing the build.
+
 #### Option B: Linux / WSL2 (recommended for local builds)
 
 ```bash
@@ -234,6 +240,7 @@ tacdb.py              read-only access to data/tac.sqlite (with built-in fallbac
 data/tac.sqlite       embedded TAC database (generated, committed)
 data/tac_extra.csv    your own verified TACs, merged at build time
 tools/build_tac_db.py builds data/tac.sqlite from Osmocom + tac_extra.csv
+p4a-recipes/kivy/     Kivy build-recipe override (see "Build notes")
 tools/make_logo.py    renders logo, launcher icons and presplash into assets/
 assets/               logo, icons, presplash, bundled fonts (OFL)
 tests/                unit tests

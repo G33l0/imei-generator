@@ -8,7 +8,7 @@ source.dir = .
 # "sqlite" is required so data/tac.sqlite (the embedded TAC database) is packaged.
 source.include_exts = py,png,jpg,kv,atlas,ttf,otf,sqlite
 source.include_patterns = data/tac.sqlite
-source.exclude_dirs = tests, tools, docs, bin, .buildozer, .github, .venv, venv, __pycache__
+source.exclude_dirs = tests, tools, docs, p4a-recipes, bin, .buildozer, .github, .venv, venv, __pycache__
 version = 1.3.0
 # sqlite3 recipe is needed for Python's sqlite3 module on Android.
 requirements = python3,kivy==2.3.1,sqlite3
@@ -32,6 +32,12 @@ android.accept_sdk_license = True
 android.allow_backup = False
 android.release_artifact = apk
 android.debug_artifact = apk
+
+# python-for-android: pin the release this project is tested with, and use
+# our Kivy recipe override (drops the unused `requests` dependency, whose
+# Android-only charset-normalizer wheel breaks p4a's pip step).
+p4a.branch = v2026.05.09
+p4a.local_recipes = ./p4a-recipes
 
 [buildozer]
 log_level = 2
