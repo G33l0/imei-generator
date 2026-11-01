@@ -58,28 +58,41 @@ def parse_bulk(text):
     return out
 
 
+VERDICT = {
+    gen.STATUS_KNOWN_DEVICE: "valid",
+    gen.STATUS_UNKNOWN_DEVICE: "unknown",
+    gen.STATUS_TEST: "test",
+    gen.STATUS_INVALID: "invalid",
+}
+VERDICT_LABEL = {"valid": "valid", "unknown": "valid format, unknown device",
+                 "test": "test IMEI", "invalid": "invalid"}
+
+
 def bulk_check(text, lookup=None):
     """Check every entry. Returns (rows, summary).
 
-    rows: [{"input", "imei", "ok", "message", "device"}]
-    summary: {"total", "valid", "invalid", "truncated"}
+    rows: [{"input", "imei", "ok", "verdict", "message", "device"}]
+      ok      the number itself is well-formed and consistent
+      verdict valid | unknown | test | invalid (see imei_generator.inspect_imei)
+    summary: {"total", "valid", "unknown", "invalid", "truncated"}
+      ("unknown" counts both unknown-device and test IMEIs)
     """
     entries = parse_bulk(text)
     truncated = len(entries) > MAX_BULK
     entries = entries[:MAX_BULK]
-    rows, valid = [], 0
+    rows = []
+    counts = {"valid": 0, "unknown": 0, "invalid": 0}
     for raw in entries:
-        num = gen.normalize(raw)
-        ok, msg = gen.validate_imei(num)
+        info = gen.inspect_imei(raw, lookup)
+        verdict = VERDICT[info["status"]]
         device = ""
-        if lookup and len(num) >= 8 and num[:8].isdigit():
-            row = lookup(num[:8])
-            if row:
-                device = "%s %s" % (row["brand"], row["model"])
-        valid += ok
-        rows.append({"input": raw, "imei": num, "ok": ok, "message": msg, "device": device})
-    return rows, {"total": len(rows), "valid": valid, "invalid": len(rows) - valid,
-                  "truncated": truncated}
+        if info["device"]:
+            device = "%s %s" % (info["device"]["brand"], info["device"]["model"])
+        counts["valid" if verdict == "valid" else "invalid" if verdict == "invalid" else "unknown"] += 1
+        rows.append({"input": raw, "imei": info["imei"], "ok": info["ok"], "verdict": verdict,
+                     "message": info["headline"], "device": device})
+    summary = dict(counts, total=len(rows), truncated=truncated)
+    return rows, summary
 
 
 def bulk_report_csv(rows):
@@ -87,5 +100,5 @@ def bulk_report_csv(rows):
     w = csv.writer(buf, lineterminator="\n")
     w.writerow(["input", "imei", "status", "device"])
     for r in rows:
-        w.writerow([r["input"], r["imei"], "valid" if r["ok"] else "invalid", r["device"]])
+        w.writerow([r["input"], r["imei"], VERDICT_LABEL[r["verdict"]], r["device"]])
     return buf.getvalue()

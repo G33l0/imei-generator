@@ -47,11 +47,17 @@ class BulkTests(unittest.TestCase):
         db = TacDB()
         good = gen.generate_imei("35104463")
         rows, s = exporters.bulk_check("%s\n490154203237519\nabc" % good, db.lookup)
-        self.assertEqual((s["total"], s["valid"], s["invalid"]), (3, 1, 2))
+        self.assertEqual((s["total"], s["valid"], s["unknown"], s["invalid"]), (3, 1, 0, 2))
+        self.assertEqual([r["verdict"] for r in rows], ["valid", "invalid", "invalid"])
         self.assertEqual(rows[0]["device"], "Apple iPhone 13")
         report = exporters.bulk_report_csv(rows).splitlines()
         self.assertEqual(report[0], "input,imei,status,device")
-        self.assertIn("valid", report[1])
+        self.assertIn(",valid,", report[1])
+
+    def test_unknown_device_counted_separately(self):
+        rows, s = exporters.bulk_check(gen.generate_imei("35999999"), TacDB().lookup)
+        self.assertEqual((s["valid"], s["unknown"], s["invalid"]), (0, 1, 0))
+        self.assertEqual(rows[0]["verdict"], "unknown")
 
     def test_limit(self):
         _, s = exporters.bulk_check("\n".join(["1"] * (exporters.MAX_BULK + 5)))

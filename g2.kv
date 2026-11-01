@@ -12,6 +12,8 @@
 #:set TEXT hex('#F2EDE3')
 #:set MUTED hex('#8C877D')
 #:set DANGER hex('#E5484D')
+#:set AMBER hex('#E0A33A')
+#:set ONLINE hex('#3FB97A')
 #:set INK hex('#0B0B0C')
 
 # ======================================================================
@@ -259,7 +261,7 @@
             cap: "round"
             joint: "round"
 
-<Row@BoxLayout>:
+<Row@Collapsible>:
     size_hint_y: None
     height: dp(48)
     spacing: dp(10)
@@ -377,16 +379,16 @@
             shorten: True
             shorten_from: "right"
     Label:
-        text: "VALID" if root.ok else "INVALID"
+        text: {"valid": "VALID", "unknown": "UNKNOWN", "test": "TEST"}.get(root.verdict, "INVALID")
         font_size: "10sp"
         bold: True
-        color: GOLD if root.ok else DANGER
+        color: {"valid": GOLD, "unknown": AMBER, "test": AMBER}.get(root.verdict, DANGER)
         size_hint: None, None
-        size: dp(64), dp(24)
+        size: dp(70), dp(24)
         pos_hint: {"center_y": 0.5}
         canvas.before:
             Color:
-                rgba: (GOLD if root.ok else DANGER)[:3] + [0.5]
+                rgba: {"valid": GOLD, "unknown": AMBER, "test": AMBER}.get(root.verdict, DANGER)[:3] + [0.5]
             Line:
                 rounded_rectangle: self.x, self.y, self.width, self.height, dp(12)
                 width: 1
@@ -479,9 +481,17 @@
             size: self.size
 
     BoxLayout:
+        id: content
         orientation: "vertical"
         padding: dp(16), dp(12), dp(16), dp(12)
         spacing: dp(12)
+        opacity: app.content_opacity
+        canvas.before:
+            PushMatrix
+            Translate:
+                xy: 0, -app.content_shift
+        canvas.after:
+            PopMatrix
 
         # ---------------- header ----------------
         BoxLayout:
@@ -505,13 +515,34 @@
                     text_size: self.size
                     halign: "left"
                     valign: "bottom"
-                Label:
-                    text: app.db_summary
-                    font_size: "12sp"
-                    color: MUTED
-                    text_size: self.size
-                    halign: "left"
-                    valign: "top"
+                BoxLayout:
+                    spacing: dp(6)
+                    Widget:
+                        size_hint: None, None
+                        size: dp(7), dp(7)
+                        pos_hint: {"center_y": 0.62}
+                        canvas:
+                            Color:
+                                rgba: ({"online": ONLINE, "checking": AMBER, "updating": AMBER}.get(app.net_state, MUTED))[:3] + [app.dot_alpha]
+                            Ellipse:
+                                pos: self.pos
+                                size: self.size
+                    Label:
+                        text: app.db_summary
+                        font_size: "12sp"
+                        color: MUTED
+                        text_size: self.size
+                        halign: "left"
+                        valign: "top"
+                        shorten: True
+                        shorten_from: "right"
+            GhostButton:
+                text: "Exit"
+                size_hint: None, None
+                size: dp(54), dp(32)
+                pos_hint: {"center_y": 0.5}
+                color: MUTED
+                on_release: app.confirm_exit()
 
         SegmentBar:
             Segment:
@@ -543,17 +574,18 @@
                     spacing: dp(12)
 
                     # Favourites strip (hidden when empty)
-                    ScrollView:
+                    Collapsible:
                         id: fav_strip
                         size_hint_y: None
                         height: dp(32)
-                        do_scroll_y: False
-                        bar_width: 0
-                        BoxLayout:
-                            id: fav_box
-                            size_hint_x: None
-                            width: self.minimum_width
-                            spacing: dp(8)
+                        ScrollView:
+                            do_scroll_y: False
+                            bar_width: 0
+                            BoxLayout:
+                                id: fav_box
+                                size_hint_x: None
+                                width: self.minimum_width
+                                spacing: dp(8)
 
                     Card:
                         padding: dp(14)
@@ -786,6 +818,25 @@
                                         size_hint_y: None
                                         height: self.minimum_height
                                 Widget:
+                                BoxLayout:
+                                    size_hint_y: None
+                                    height: dp(34)
+                                    spacing: dp(8)
+                                    Label:
+                                        text: app.update_status
+                                        font_size: "12sp"
+                                        color: TEXT
+                                        text_size: self.size
+                                        halign: "left"
+                                        valign: "middle"
+                                        shorten: True
+                                        shorten_from: "right"
+                                    GhostButton:
+                                        text: "Checking…" if app.net_state in ("checking", "updating") else "Update database"
+                                        size_hint_x: None
+                                        width: dp(130)
+                                        disabled: app.net_state in ("checking", "updating")
+                                        on_release: app.start_db_update(manual=True)
                                 Hint:
                                     text: app.db_info
                                 Hint:
@@ -913,8 +964,10 @@
         opacity: 0
         markup: True
         size_hint: None, None
-        size: min(root.width - dp(36), self.texture_size[0] + dp(36)), dp(46)
-        pos: (root.width - self.width) / 2, dp(22)
+        # Full-width bar: its width depends only on the screen, never on its
+        # own text (a text-dependent width caused a layout feedback loop).
+        size: root.width - dp(36), dp(46)
+        pos: dp(18), dp(22)
         font_size: "14sp"
         color: TEXT
         shorten: True
@@ -933,3 +986,188 @@
             Line:
                 rounded_rectangle: self.x, self.y, self.width, self.height, dp(14)
                 width: 1
+
+    # ---------------- database update: top progress line ----------------
+    Widget:
+        size_hint: None, None
+        size: root.width, dp(3)
+        pos: 0, root.top - dp(3)
+        opacity: app.bar_opacity
+        canvas:
+            Color:
+                rgba: GOLD[:3] + [0.18]
+            Rectangle:
+                pos: self.pos
+                size: self.size
+            Color:
+                rgba: GOLD
+            Rectangle:
+                # determinate while downloading, a sweeping segment while checking
+                pos: (self.x, self.y) if app.update_progress >= 0 else (self.x + (app.shimmer * 1.4 - 0.4) * self.width, self.y)
+                size: (self.width * app.update_progress, self.height) if app.update_progress >= 0 else (self.width * 0.4, self.height)
+
+    # ---------------- database update: success banner ----------------
+    BoxLayout:
+        size_hint: None, None
+        size: root.width - dp(32), dp(64)
+        pos: dp(16), root.top - dp(78) + app.banner_offset
+        opacity: app.banner_opacity
+        padding: dp(14), dp(10)
+        spacing: dp(12)
+        canvas.before:
+            Color:
+                rgba: SURFACE2
+            RoundedRectangle:
+                pos: self.pos
+                size: self.size
+                radius: [dp(16)]
+            Color:
+                rgba: GOLD[:3] + [0.7]
+            Line:
+                rounded_rectangle: self.x, self.y, self.width, self.height, dp(16)
+                width: 1.1
+        CheckMark:
+            size_hint: None, None
+            size: dp(40), dp(40)
+            pos_hint: {"center_y": 0.5}
+            progress: app.banner_check
+        BoxLayout:
+            orientation: "vertical"
+            Label:
+                text: app.banner_title
+                font_name: "Display"
+                bold: True
+                font_size: "15sp"
+                color: TEXT
+                text_size: self.size
+                halign: "left"
+                valign: "bottom"
+                shorten: True
+                shorten_from: "right"
+            Label:
+                text: app.banner_sub
+                font_size: "12sp"
+                color: MUTED
+                text_size: self.size
+                halign: "left"
+                valign: "top"
+                shorten: True
+                shorten_from: "right"
+
+    # ---------------- boot intro (removed when finished) ----------------
+    Splash:
+        id: splash
+        canvas.before:
+            Color:
+                rgba: BG
+            Rectangle:
+                pos: self.pos
+                size: self.size
+        Widget:
+            id: ring
+            canvas:
+                Color:
+                    rgba: GOLD[:3] + [0.14]
+                Line:
+                    circle: root.center_x, root.center_y + dp(40), dp(76)
+                    width: dp(1.2)
+                Color:
+                    rgba: GOLD
+                Line:
+                    circle: root.center_x, root.center_y + dp(40), dp(76), 0, app.splash_angle
+                    width: dp(2)
+                    cap: "round"
+        Image:
+            source: app.logo
+            size_hint: None, None
+            size: dp(104) * app.splash_logo_scale, dp(104) * app.splash_logo_scale
+            center: root.center_x, root.center_y + dp(40)
+            fit_mode: "contain"
+        Label:
+            markup: True
+            text: "[color=#D4AF37]G2[/color]  IMEI Generator"
+            font_name: "Display"
+            bold: True
+            font_size: "24sp"
+            color: TEXT
+            opacity: app.splash_text_opacity
+            size_hint: None, None
+            size: root.width, dp(34)
+            pos: 0, root.center_y - dp(84) - (1 - app.splash_text_opacity) * dp(14)
+            halign: "center"
+            text_size: self.size
+        Label:
+            text: app.splash_status
+            font_size: "13sp"
+            color: MUTED
+            opacity: app.splash_text_opacity
+            size_hint: None, None
+            size: root.width, dp(22)
+            pos: 0, root.center_y - dp(112)
+            halign: "center"
+            text_size: self.size
+
+<ExitDialog@ModalView>:
+    size_hint: None, None
+    size: min(dp(320), app.root.width - dp(48)) if app.root else dp(300), dp(176)
+    auto_dismiss: True
+    background: ""
+    background_color: 0, 0, 0, 0
+    overlay_color: 0, 0, 0, 0.6
+    BoxLayout:
+        orientation: "vertical"
+        padding: dp(20)
+        spacing: dp(14)
+        canvas.before:
+            Color:
+                rgba: SURFACE
+            RoundedRectangle:
+                pos: self.pos
+                size: self.size
+                radius: [dp(18)]
+            Color:
+                rgba: GOLD[:3] + [0.5]
+            Line:
+                rounded_rectangle: self.x, self.y, self.width, self.height, dp(18)
+                width: 1
+        Label:
+            text: "Close G2 IMEI Generator?"
+            font_name: "Display"
+            bold: True
+            font_size: "17sp"
+            color: TEXT
+            size_hint_y: None
+            height: dp(26)
+            text_size: self.size
+            halign: "left"
+        Label:
+            text: "Your settings, favourites and history are saved."
+            font_size: "13sp"
+            color: MUTED
+            text_size: self.width, None
+            halign: "left"
+        BoxLayout:
+            size_hint_y: None
+            height: dp(44)
+            spacing: dp(10)
+            GhostButton:
+                text: "Cancel"
+                on_release: root.dismiss()
+            GoldButton:
+                text: "Exit"
+                on_release: root.dismiss(); app.exit_app()
+
+<CheckMark>:
+    canvas:
+        Color:
+            rgba: GOLD[:3] + [0.16 * min(1, self.progress * 3)]
+        Ellipse:
+            pos: self.pos
+            size: self.size
+        Color:
+            rgba: GOLD
+        Line:
+            points: self.points
+            width: dp(1.8)
+            cap: "round"
+            joint: "round"

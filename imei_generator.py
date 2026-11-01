@@ -54,6 +54,77 @@ def validate_imei(imei):
     return True, "Valid IMEI"
 
 
+# Reporting Body Identifiers: the first two digits of a TAC name the body that
+# allocated it. 00 is reserved for test equipment.
+REPORTING_BODIES = {
+    "00": "Test IMEI",
+    "01": "PTCRB (USA)", "10": "PTCRB (USA)",
+    "30": "Iridium",
+    "33": "DGPT (France)",
+    "35": "BABT (UK)",
+    "44": "BABT (UK)",
+    "45": "NTA (Denmark)",
+    "49": "BZT/BAPT (Germany)",
+    "50": "BZT ETS (Germany)",
+    "51": "Cetecom ICT (Germany)",
+    "52": "Cetecom (Germany)",
+    "53": "TUV (Germany)",
+    "54": "Phoenix Test Lab (Germany)",
+    "86": "TAF (China)",
+    "91": "MSAI (India)",
+    "98": "BABT (UK)",
+    "99": "GHA (multi-standard)",
+}
+
+STATUS_INVALID = "invalid"
+STATUS_TEST = "test"
+STATUS_UNKNOWN_DEVICE = "valid_unknown"
+STATUS_KNOWN_DEVICE = "valid_known"
+
+
+def inspect_imei(imei, lookup=None):
+    """Full verdict for one IMEI, for display.
+
+    Returns a dict with:
+      status   one of STATUS_* above
+      ok       True when the number itself is well-formed and consistent
+      headline short neutral text for the UI
+      imei     normalised digits
+      issuer   reporting-body name, or "" if unrecognised
+      device   lookup row for the TAC (dict) or None
+      notes    list of extra neutral observations
+
+    A consistent number only proves it is well-formed. Whether it is assigned
+    to a real handset can only be confirmed by the operator/GSMA, so an
+    unknown TAC or issuer is reported rather than hidden.
+    """
+    num = normalize(imei)
+    ok, msg = validate_imei(num)
+    result = {"status": STATUS_INVALID, "ok": ok, "headline": msg, "imei": num,
+              "issuer": "", "device": None, "notes": []}
+    if len(num) >= 8 and num[:8].isdigit():
+        result["issuer"] = REPORTING_BODIES.get(num[:2], "")
+        if lookup:
+            result["device"] = lookup(num[:8])
+    if not ok:
+        return result
+    notes = result["notes"]
+    if len(set(num[:14])) == 1:
+        notes.append("Repeated single digit: placeholder, not a real device")
+    elif num[8:14] in ("000000", "123456", "999999"):
+        notes.append("Serial looks like a placeholder")
+    if num[:2] == "00":
+        result["status"] = STATUS_TEST
+        result["headline"] = "Valid test IMEI (not issued to a phone)"
+    elif result["device"]:
+        result["status"] = STATUS_KNOWN_DEVICE
+        result["headline"] = "Valid IMEI"
+    else:
+        result["status"] = STATUS_UNKNOWN_DEVICE
+        result["headline"] = "Valid format, unknown device type"
+    return result
+
+
 def generate_imei(tac):
     """Generate one 15-digit Luhn-valid IMEI starting with an 8-digit TAC."""
     tac = normalize(tac)

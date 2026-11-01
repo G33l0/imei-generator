@@ -1,0 +1,10 @@
+# Used as PIP_CONSTRAINT for Buildozer builds (see .github/workflows/build-apk.yml).
+#
+# python-for-android creates one helper venv per CPU architecture in the same
+# folder and runs `pip install -U pip` in it. After the first architecture
+# upgrades pip (25.3 -> 26.x), re-creating the venv for the second one leaves
+# pip half-old/half-new and the build dies with:
+#   ImportError: cannot import name 'BuildDependencyInstallError'
+# Holding pip at the version bundled with python-for-android's Python 3.14.2
+# makes that upgrade a no-op, so every pass sees an identical, working pip.
+pip==25.3

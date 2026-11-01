@@ -1,6 +1,7 @@
 # main.py -- G2 IMEI Generator (Kivy front end). Layout lives in g2.kv.
 import math
 import os
+import threading
 import time
 
 import kivy
@@ -15,6 +16,7 @@ from kivy.core.window import Window
 from kivy.lang import Builder
 from kivy.metrics import dp
 from kivy.properties import BooleanProperty, ListProperty, NumericProperty, StringProperty
+from kivy.factory import Factory
 from kivy.uix.behaviors import ButtonBehavior, ToggleButtonBehavior
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.floatlayout import FloatLayout
@@ -22,9 +24,10 @@ from kivy.uix.label import Label
 from kivy.uix.widget import Widget
 from kivy.utils import platform
 
+import dbupdate
 import exporters
 import imei_generator as gen
-from tacdb import TacDB
+from tacdb import DEFAULT_PATH as BUNDLED_DB, TacDB
 from userdata import UserData
 
 APP_NAME = "G2 IMEI Generator"
@@ -43,6 +46,7 @@ QTY_PRESETS = (1, 10, 50, 100)
 GOLD = "D4AF37"
 MUTED = "8C877D"
 DANGER = "E5484D"
+AMBER = "E0A33A"
 
 
 def register_fonts():
@@ -79,7 +83,7 @@ class BulkRow(ButtonBehavior, BoxLayout):
     markup = StringProperty("")
     device = StringProperty("")
     imei = StringProperty("")
-    ok = BooleanProperty(False)
+    verdict = StringProperty("invalid")
 
     def on_release(self):
         App.get_running_app().copy_one(self.imei)
@@ -97,6 +101,50 @@ class HistoryRow(ButtonBehavior, BoxLayout):
 class DetailRow(BoxLayout):
     key = StringProperty("")
     value = StringProperty("")
+
+
+class Splash(FloatLayout):
+    """Boot intro overlay; blocks touches until it is removed."""
+
+    def on_touch_down(self, touch):
+        return True
+
+    def on_touch_move(self, touch):
+        return True
+
+    def on_touch_up(self, touch):
+        return True
+
+
+class CheckMark(Widget):
+    """Gold tick that draws itself as ``progress`` goes 0 -> 1."""
+    progress = NumericProperty(0)
+    points = ListProperty([])
+
+    def on_progress(self, *_):
+        self._build()
+
+    def on_size(self, *_):
+        self._build()
+
+    def on_pos(self, *_):
+        self._build()
+
+    def _build(self):
+        x, y, w, h = self.x, self.y, self.width, self.height
+        a = (x + w * 0.28, y + h * 0.52)
+        b = (x + w * 0.44, y + h * 0.36)
+        c = (x + w * 0.73, y + h * 0.66)
+        p = max(0.0, min(1.0, self.progress))
+        if p <= 0:
+            self.points = []
+        elif p < 0.4:  # first stroke (short leg)
+            t = p / 0.4
+            self.points = [a[0], a[1], a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]
+        else:          # second stroke (long leg)
+            t = (p - 0.4) / 0.6
+            self.points = [a[0], a[1], b[0], b[1],
+                           b[0] + (c[0] - b[0]) * t, b[1] + (c[1] - b[1]) * t]
 
 
 class Chip(ButtonBehavior, Label):
@@ -136,13 +184,38 @@ class StarButton(ButtonBehavior, Widget):
 # ---------------------------------------------------------------------------
 #  Helpers
 # ---------------------------------------------------------------------------
+class Collapsible(BoxLayout):
+    """A row that can be hidden without leaving a gap.
+
+    Hidden rows collapse to zero height, but their children keep their own
+    fixed heights and overflow onto the widgets above. They must therefore
+    ignore touches entirely: a *disabled* widget would swallow every tap that
+    lands on it, which is what blocked the source buttons after choosing
+    Custom TAC.
+    """
+    hidden = BooleanProperty(False)
+
+    def on_touch_down(self, touch):
+        return False if self.hidden else super().on_touch_down(touch)
+
+    def on_touch_move(self, touch):
+        return False if self.hidden else super().on_touch_move(touch)
+
+    def on_touch_up(self, touch):
+        return False if self.hidden else super().on_touch_up(touch)
+
+
 def set_visible(widget, visible):
-    """Hide a widget without leaving a gap or letting it receive touches."""
+    """Show/hide a Collapsible row without leaving a gap."""
     if not hasattr(widget, "_full_height"):
         widget._full_height = widget.height
+    widget.hidden = not visible
     widget.height = widget._full_height if visible else 0
     widget.opacity = 1 if visible else 0
-    widget.disabled = not visible
+    if not visible:
+        for w in widget.walk(restrict=True):
+            if getattr(w, "focus", False):
+                w.focus = False  # close the keyboard of a hidden field
 
 
 def select_segment(widget):
@@ -188,6 +261,26 @@ class G2ImeiApp(App):
     logo = StringProperty(os.path.join(HERE, "assets", "logo.png"))
     format_labels = ListProperty([label for _, label, _ in exporters.FORMATS])
     mode = StringProperty(MODE_ESIM)
+    net_state = StringProperty("offline")   # checking | updating | online | offline
+    update_status = StringProperty("")
+
+    # Animation state (driven by kivy.animation.Animation)
+    content_opacity = NumericProperty(0)
+    content_shift = NumericProperty(dp(28))
+    splash_angle = NumericProperty(0)
+    splash_logo_scale = NumericProperty(1)
+    splash_text_opacity = NumericProperty(0)
+    splash_status = StringProperty("Loading TAC database")
+    bar_opacity = NumericProperty(0)
+    update_progress = NumericProperty(-1)    # -1 = indeterminate
+    shimmer = NumericProperty(0)
+    dot_alpha = NumericProperty(1)
+    shown_count = NumericProperty(0)
+    banner_offset = NumericProperty(dp(24))
+    banner_opacity = NumericProperty(0)
+    banner_check = NumericProperty(0)
+    banner_title = StringProperty("")
+    banner_sub = StringProperty("")
 
     # ---- lifecycle ------------------------------------------------------
     def build(self):
@@ -195,11 +288,19 @@ class G2ImeiApp(App):
         self.icon = os.path.join(HERE, "assets", "icon.png")
         register_fonts()
         Window.clearcolor = (11 / 255, 11 / 255, 12 / 255, 1)
-        Window.softinput_mode = "below_target"
+        # Default mode: the keyboard overlays the bottom of the screen. Every
+        # text field sits in the top half, and unlike Kivy's "pan" /
+        # "below_target" modes nothing is shifted, so taps always land where
+        # they look like they land.
+        Window.softinput_mode = ""
+        Window.bind(on_keyboard=self.on_key)
         style_android_bars()
 
-        self.db = TacDB()
         self.user = UserData(self.user_data_dir)
+        path, _ = dbupdate.choose_database(BUNDLED_DB, self.user_data_dir)
+        self.db = TacDB(path)
+        if self.db.error and path != BUNDLED_DB:  # saved copy unusable: fall back
+            self.db = TacDB(BUNDLED_DB)
         self.results = []        # [(imei, tac, label)]
         self.bulk_rows = []
         self.esim = dict(self.db.esim_models())
@@ -208,18 +309,8 @@ class G2ImeiApp(App):
         self._restoring = True
         self.empty_text = "No numbers yet.\nPick a source and tap [color=#%s]Generate[/color]." % GOLD
 
-        meta = self.db.meta()
-        count = self.db.count()
-        self.db_summary = "Offline TAC database  ·  {:,} devices".format(count)
-        info = "Database: {:,} TACs, {} eSIM iPhone TACs. Source: {}.".format(
-            count, sum(len(t) for t in self.esim.values()), meta.get("sources", "?"))
-        if meta.get("built"):
-            info += " Built %s." % meta["built"]
-        if meta.get("license"):
-            info += "\n" + meta["license"] + "."
-        if self.db.error:
-            info += "\nDatabase not loaded (%s), using built-in list." % self.db.error
-        self.db_info = info
+        self.shown_count = self.db.count()
+        self.refresh_db_labels()
 
         Builder.load_file(os.path.join(HERE, "g2.kv"))
         root = Root()
@@ -237,14 +328,206 @@ class G2ImeiApp(App):
         self.refresh_favorites()
         self.refresh_history()
         self._restoring = False
+        Clock.schedule_once(lambda dt: self.play_intro(), 0)
         return root
+
+    # ---- boot intro -------------------------------------------------------
+    def play_intro(self):
+        """Gold ring draws around the logo, title rises in, then the screen
+        glides up into place. ~1.6 s; the database is already open."""
+        count = self.db.count()
+        ring = Animation(splash_angle=360, d=0.95, t="in_out_cubic")
+        breathe = (Animation(splash_logo_scale=1.06, d=0.45, t="out_quad")
+                   + Animation(splash_logo_scale=1.0, d=0.5, t="in_out_quad"))
+        text_in = Animation(d=0.15) + Animation(splash_text_opacity=1, d=0.5, t="out_cubic")
+
+        def ready(*_):
+            self.splash_status = "{:,} devices ready".format(count)
+            Clock.schedule_once(self._reveal, 0.35)
+
+        ring.bind(on_complete=ready)
+        ring.start(self)
+        breathe.start(self)
+        text_in.start(self)
+        # Safety net: the intro blocks touches, so never let it outlive 4 s.
+        Clock.schedule_once(self._force_reveal, 4.0)
+
+    def _force_reveal(self, *_):
+        splash = self.root.ids.splash
+        if splash.parent:
+            Animation.cancel_all(self)
+            splash.parent.remove_widget(splash)
+            self.content_opacity, self.content_shift = 1, 0
+            self.start_db_update()
+
+    def _reveal(self, *_):
+        splash = self.root.ids.splash
+        Animation(opacity=0, d=0.38, t="out_quad").start(splash)
+        reveal = Animation(content_opacity=1, content_shift=0, d=0.55, t="out_cubic")
+
+        def done(*_):
+            if splash.parent:
+                splash.parent.remove_widget(splash)
+                self.start_db_update()
+
+        reveal.bind(on_complete=done)
+        reveal.start(self)
+
+    # ---- update animations --------------------------------------------------
+    def _busy_animations(self, on):
+        Animation.cancel_all(self, "shimmer", "dot_alpha", "bar_opacity")
+        if on:
+            self.update_progress = -1
+            self.shimmer = 0
+            sweep = Animation(shimmer=1, d=1.05, t="in_out_sine") + Animation(shimmer=0, d=0)
+            sweep.repeat = True
+            sweep.start(self)
+            pulse = Animation(dot_alpha=0.25, d=0.55, t="in_out_sine") + \
+                Animation(dot_alpha=1, d=0.55, t="in_out_sine")
+            pulse.repeat = True
+            pulse.start(self)
+            Animation(bar_opacity=1, d=0.2).start(self)
+        else:
+            self.dot_alpha = 1
+            Animation(bar_opacity=0, d=0.35, t="out_quad").start(self)
+
+    def _set_download_progress(self, frac):
+        if self.net_state != "updating":
+            self.net_state = "updating"
+            self.update_status = "Downloading the new database…"
+            Animation.cancel_all(self, "shimmer")
+            self.refresh_db_labels()
+        Animation.cancel_all(self, "update_progress")
+        Animation(update_progress=frac, d=0.18, t="out_quad").start(self)
+
+    def show_banner(self, title, sub):
+        Animation.cancel_all(self, "banner_offset", "banner_opacity", "banner_check")
+        self.banner_title, self.banner_sub = title, sub
+        self.banner_offset, self.banner_opacity, self.banner_check = dp(24), 0, 0
+        slide_in = Animation(banner_offset=0, banner_opacity=1, d=0.45, t="out_back")
+        tick = Animation(d=0.2) + Animation(banner_check=1, d=0.5, t="out_cubic")
+        slide_out = (Animation(d=3.2)
+                     + Animation(banner_offset=dp(24), banner_opacity=0, d=0.35, t="in_quad"))
+        slide_in.start(self)
+        tick.start(self)
+        slide_out.start(self)
+
+    def on_shown_count(self, *_):
+        if getattr(self, "db", None) is not None and self.root:
+            self.refresh_db_labels()
 
     def on_pause(self):
         self.save_settings()
         return True
 
+    def on_resume(self):
+        # Phones keep apps alive for days: re-check if the last check is old.
+        last = self.user.get("last_update_check", 0) or 0
+        if time.time() - last > 6 * 3600:
+            self.start_db_update()
+
     def on_stop(self):
         self.save_settings()
+
+    # ---- exit / back key -------------------------------------------------
+    def confirm_exit(self):
+        Factory.ExitDialog().open()
+
+    def exit_app(self):
+        self.save_settings()
+        self.stop()
+
+    def on_key(self, window, key, *args):
+        """Android back button (Esc on desktop): step back, then ask to exit."""
+        if key != 27:
+            return False
+        for w in list(window.children):
+            if isinstance(w, Factory.ModalView):  # close an open dialog first
+                w.dismiss()
+                return True
+        ids = self.root.ids
+        if ids.brand.is_open or ids.model.is_open or ids.fmt.is_open:
+            return False  # let the dropdown close itself
+        if ids.sm.current != "generate":
+            select_segment(ids.tab_generate)
+        else:
+            self.confirm_exit()
+        return True  # never let Kivy close the app without asking
+
+    # ---- TAC database: labels and online updates ------------------------
+    def refresh_db_labels(self):
+        meta = self._db_meta = getattr(self, "_db_meta", None) or self.db.meta()
+        count = self.db.count()
+        built = meta.get("built", "")
+        state = {"online": "Online", "checking": "Checking for updates",
+                 "updating": "Updating"}.get(self.net_state, "Offline")
+        self.db_summary = "{}  ·  {:,} devices{}".format(
+            state, int(round(self.shown_count)) or count, ("  ·  " + built) if built else "")
+        info = "Database: {:,} TACs, {} eSIM iPhone TACs. Source: {}.".format(
+            count, sum(len(t) for t in self.esim.values()), meta.get("sources", "?"))
+        if built:
+            info += " Built %s." % built
+        info += " " + ("Downloaded update." if self.db.path != BUNDLED_DB else "Bundled with the app.")
+        if meta.get("license"):
+            info += "\n" + meta["license"] + "."
+        if self.db.error:
+            info += "\nDatabase not loaded (%s), using built-in list." % self.db.error
+        self.db_info = info
+
+    def start_db_update(self, manual=False):
+        if self.net_state in ("checking", "updating"):
+            return
+        self.net_state = "checking"
+        self.update_status = "Checking for database updates…"
+        self.refresh_db_labels()
+        self._busy_animations(True)
+        current = dbupdate.read_meta(self.db.path) or {}
+        user_dir = self.user_data_dir
+
+        def progress(frac):  # called from the worker thread
+            Clock.schedule_once(lambda dt: self._set_download_progress(frac))
+
+        def work():
+            result = dbupdate.check_and_update(current, user_dir, progress=progress)
+            Clock.schedule_once(lambda dt: self.finish_db_update(result, manual))
+
+        threading.Thread(target=work, name="tac-db-update", daemon=True).start()
+
+    def finish_db_update(self, result, manual):
+        self._busy_animations(False)
+        old_count = self.db.count()
+        if result.status == "updated":
+            new_db = TacDB(result.path)
+            if new_db.error:
+                result = dbupdate.UpdateResult("error", "Update could not be opened")
+            else:
+                self.db = new_db
+                self._db_meta = None
+                self.esim = dict(self.db.esim_models())
+                self.root.ids.brand.values = [ANY_BRAND] + self.db.brands()
+                self.refresh_models()
+        self.net_state = "online" if result.status in ("updated", "current", "unavailable") else "offline"
+        built = self.db.meta().get("built", "?")
+        self.update_status = {
+            "updated": "Updated to the %s database." % built,
+            "current": "Up to date (database from %s)." % built,
+            "offline": "Offline: using saved database from %s." % built,
+            "unavailable": "Online, no update published: using database from %s." % built,
+        }.get(result.status, "Update failed: using saved database from %s." % built)
+        self.refresh_db_labels()
+        self.user.set_many({"last_update_check": time.time(), "last_update_status": result.status})
+        if result.status == "updated":
+            new_count = self.db.count()
+            Animation.cancel_all(self, "shown_count")
+            self.shown_count = old_count
+            Animation(shown_count=new_count, d=1.4, t="out_cubic").start(self)
+            diff = new_count - old_count
+            change = ("{:+,} device{}".format(diff, "" if abs(diff) == 1 else "s") if diff
+                      else "Corrections to existing devices")
+            self.show_banner("Database updated",
+                             "{}  ·  {:,} total  ·  {}".format(change, new_count, built))
+        elif manual:
+            self.snack(self.update_status, error=result.status == "error")
 
     # ---- settings (feature: remember your setup) -----------------------
     def save_settings(self, *_):
@@ -388,8 +671,13 @@ class G2ImeiApp(App):
                 ids.tac_info.text = "Any 8-digit TAC works. Known ones are matched to a device."
             else:
                 row = self.db.lookup(tac)
-                ids.tac_info.text = ("Matches %s %s" % (row["brand"], row["model"]) if row
-                                     else "Not in the database. Numbers will still be valid.")
+                if row:
+                    ids.tac_info.text = "Matches %s %s" % (row["brand"], row["model"])
+                elif tac[:2] not in gen.REPORTING_BODIES:
+                    ids.tac_info.text = ("Not in the database, and %s is not a known allocation "
+                                         "prefix. Numbers will be well-formed but unrealistic." % tac[:2])
+                else:
+                    ids.tac_info.text = "Not in the database. Numbers will still be well-formed."
         else:
             tacs = self.model_tacs.get(ids.model.text, [])
             if tacs:
@@ -615,15 +903,22 @@ class G2ImeiApp(App):
             return
         rows = []
         if len(text) == 8 and text.isdigit():
-            status = "TAC lookup"
+            row = self.db.lookup(text)
+            status = ("TAC lookup" if row else
+                      "[color=#%s]TAC not in the database[/color]" % AMBER)
+            info = {"device": row, "issuer": gen.REPORTING_BODIES.get(text[:2], ""), "notes": []}
         else:
-            ok, msg = gen.validate_imei(text)
-            status = "[color=#%s]%s[/color]" % (GOLD if ok else DANGER, escape(msg))
+            info = gen.inspect_imei(text, self.db.lookup)
+            colour = {gen.STATUS_KNOWN_DEVICE: GOLD, gen.STATUS_UNKNOWN_DEVICE: AMBER,
+                      gen.STATUS_TEST: AMBER}.get(info["status"], DANGER)
+            status = "[color=#%s]%s[/color]" % (colour, escape(info["headline"]))
             if len(text) == 15 and text.isdigit():
                 rows.append(("IMEI", format_imei(text)))
         if len(text) >= 8 and text[:8].isdigit():
             rows.append(("TAC", "[font=Mono]%s[/font]" % text[:8]))
-            row = self.db.lookup(text[:8])
+            rows.append(("Allocated by", escape(info["issuer"]) if info["issuer"] else
+                         "[color=#%s]Unrecognised prefix %s[/color]" % (AMBER, text[:2])))
+            row = info["device"]
             if row:
                 rows.append(("Brand", escape(row["brand"])))
                 rows.append(("Model", "[b]%s[/b]" % escape(row["model"])))
@@ -632,6 +927,11 @@ class G2ImeiApp(App):
                 rows.append(("eSIM iPhone", "Yes" if row["esim"] else "No"))
             else:
                 rows.append(("Device", "[color=#%s]Not in the database[/color]" % MUTED))
+        for note in info.get("notes", []):
+            rows.append(("Note", "[color=#%s]%s[/color]" % (AMBER, escape(note))))
+        if len(text) == 15 and info.get("ok"):
+            rows.append(("Good to know", "[color=#%s]A valid number is well-formed. Only the network "
+                         "operator can confirm it belongs to a real phone.[/color]" % MUTED))
         ids.check_status.text = status
         for k, v in rows:
             details.add_widget(DetailRow(key=k, value=v))
@@ -647,15 +947,16 @@ class G2ImeiApp(App):
             return
         ids.bulk_rv.data = [{
             "markup": format_imei(r["imei"]) if r["ok"] else escape(r["input"]),
-            "device": r["device"] or ("" if r["ok"] else r["message"]),
+            "device": r["device"] or r["message"],
             "imei": r["imei"],
-            "ok": r["ok"],
+            "verdict": r["verdict"],
         } for r in rows]
         ids.bulk_rv.scroll_y = 1
         ids.bulk_empty.opacity = 0
-        summary = "[color=#%s]%s valid[/color]   [color=#%s]%s invalid[/color]   [color=#%s]of %s[/color]" % (
-            GOLD, "{:,}".format(s["valid"]), DANGER, "{:,}".format(s["invalid"]),
-            MUTED, "{:,}".format(s["total"]))
+        summary = ("[color=#%s]%s valid[/color]  [color=#%s]%s unknown[/color]  "
+                   "[color=#%s]%s invalid[/color]  [color=#%s]of %s[/color]") % (
+            GOLD, "{:,}".format(s["valid"]), AMBER, "{:,}".format(s["unknown"]),
+            DANGER, "{:,}".format(s["invalid"]), MUTED, "{:,}".format(s["total"]))
         if s["truncated"]:
             summary += "  [color=#%s](first %s only)[/color]" % (MUTED, "{:,}".format(exporters.MAX_BULK))
         self.bulk_summary = summary

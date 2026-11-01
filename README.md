@@ -39,9 +39,24 @@ or to pretend to be a real device, is illegal in most countries.
 - Every batch is saved on the device (the most recent 100). Tap a batch to open it again, copy it in the current format, or delete it.
 
 **Check**
-- **Single**: says whether an IMEI is valid (spaces and dashes are fine) and shows the device for its TAC. **Paste** checks the clipboard straight away.
-- **Bulk**: paste a list (one per line, or separated by commas, semicolons or tabs; JSON and quoted lists work too). You get a count of valid and invalid entries, each number with its device, **Copy valid** / **Copy invalid**, and a CSV report to share. Up to 5,000 entries per check.
-- The app never shows how it verifies numbers. Messages are just "Valid IMEI" or "Invalid IMEI".
+- **Single**: checks one IMEI (spaces and dashes are fine) and shows one of four verdicts:
+  - **Valid IMEI**: well-formed, and its TAC is a known device (brand and model are shown).
+  - **Valid format, unknown device type**: well-formed, but the TAC isn't in the database.
+  - **Valid test IMEI**: starts with `00`, which is reserved for test equipment.
+  - **Invalid IMEI**: not a well-formed IMEI.
+
+  It also shows who allocated the TAC (for example BABT (UK) for `35…`) and flags placeholder-looking numbers. **Paste** checks the clipboard straight away.
+- **Bulk**: paste a list (one per line, or separated by commas, semicolons or tabs; JSON and quoted lists work too). You get counts of valid, unknown and invalid entries, each number with its device, **Copy valid** / **Copy invalid**, and a CSV report to share. Up to 5,000 entries per check.
+- **What "valid" means:** every IMEI carries a built-in consistency digit, so changing any single digit of a valid number always makes it invalid. That's how typos are caught, and it's expected, not a false positive. A valid number is only *well-formed*: whether it belongs to a real phone can only be confirmed by the network operator or the GSMA. The app never shows how it verifies numbers.
+
+**Online database updates**: on startup (and when you return to the app after 6+ hours) the app checks for a newer TAC database in the background. If one exists, it downloads it, verifies it (size, checksum, row count, data hash) and switches to it without a restart. The header shows **Online** (green dot) or **Offline**. With no connection the app keeps working on the last database it has, either the bundled one or the last downloaded update, whichever is newer. **Check → Update database** checks on demand.
+
+**Animations**:
+- **Boot:** the app picks up from the black Android splash screen. A gold ring draws around the logo, the title rises in, and "22,524 devices ready" confirms the database loaded. Then the screen glides up into place (about 1.6 seconds).
+- **Database check:** a thin gold line sweeps along the top while the app checks for updates, then shows real download progress. The header's status dot pulses while it works.
+- **Update installed:** a banner slides down with a gold tick drawn stroke by stroke, and the header's device count rolls up to the new total.
+
+**Exit**: the **Exit** button (top right) or the Android back button asks before closing. On the Check and History tabs, back returns to Generate first.
 
 **Remembers your setup**: the last tab, source, brand, search, model, custom TAC, quantity, copy format and Check mode are restored when you reopen the app.
 
@@ -94,6 +109,19 @@ restricted, so don't scrape it.
 
 ---
 
+### How online updates are published
+
+`.github/workflows/update-tac-db.yml` rebuilds the database every Monday, whenever
+`data/tac_extra.csv` changes on `main`, or when run by hand (**Actions → Update TAC
+database → Run workflow**). If the data actually changed, it commits the new
+`data/tac.sqlite` and `data/tac_manifest.json`. Phones pick the update up the next time
+the app starts. So to push new verified TACs to every installed app, add them to
+`data/tac_extra.csv` and merge. No new APK is needed.
+
+The app reads the manifest from
+`https://raw.githubusercontent.com/G33l0/imei-generator/main/data/tac_manifest.json`,
+so the repository must be public for updates to work (the URL is set in `dbupdate.py`).
+
 ## Setting up the APK with the full TAC database embedded
 
 The database is a normal file at `data/tac.sqlite`, and `buildozer.spec` already packages it
@@ -130,6 +158,15 @@ the red "Buildozer failed" box; the real error is above the environment dump. Th
 uses Node 24 actions and builds on Ubuntu 24.04 (see the comment at the top of
 `.github/workflows/build-apk.yml` to build on Ubuntu 26.04 instead).
 
+**Build notes.** `buildozer.spec` pins python-for-android to `v2026.05.09` and uses a small
+Kivy recipe override in `p4a-recipes/kivy/`. The override removes Kivy's unused `requests`
+dependency, whose Android-only `charset-normalizer` wheel otherwise stops the build with
+"*…android_24_arm64_v8a.whl is not a supported wheel on this platform*". A second fix,
+`tools/pip-constraints.txt` (used as `PIP_CONSTRAINT`), keeps pip at the version bundled with
+python-for-android, so its venv isn't left half-upgraded when it builds the second CPU type
+("*ImportError: cannot import name 'BuildDependencyInstallError'*"). Keep all three settings
+when changing the build.
+
 #### Option B: Linux / WSL2 (recommended for local builds)
 
 ```bash
@@ -145,6 +182,7 @@ pip install --upgrade pip setuptools wheel
 pip install buildozer "cython<3"
 
 python -m unittest discover -s tests       # optional sanity check
+export PIP_CONSTRAINT=$PWD/tools/pip-constraints.txt   # see build notes
 buildozer -v android debug                 # first run downloads the SDK/NDK (~3 GB)
 ```
 
@@ -230,10 +268,13 @@ g2.kv                 layout and black/gold styling
 imei_generator.py     validation and batch generation (no Kivy dependency)
 exporters.py          copy/share formats, bulk-check parsing and reports
 userdata.py           on-device settings, favourites and history (SQLite)
+dbupdate.py           background TAC database updates (download, verify, swap)
 tacdb.py              read-only access to data/tac.sqlite (with built-in fallback)
 data/tac.sqlite       embedded TAC database (generated, committed)
 data/tac_extra.csv    your own verified TACs, merged at build time
+data/tac_manifest.json describes the current database for in-app updates
 tools/build_tac_db.py builds data/tac.sqlite from Osmocom + tac_extra.csv
+p4a-recipes/kivy/     Kivy build-recipe override (see "Build notes")
 tools/make_logo.py    renders logo, launcher icons and presplash into assets/
 assets/               logo, icons, presplash, bundled fonts (OFL)
 tests/                unit tests
