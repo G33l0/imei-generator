@@ -75,6 +75,53 @@ class GenerateTests(unittest.TestCase):
         self.assertTrue(g.validate_imei(g.generate_imei_with_tac("35104463"))[0])
 
 
+class InspectTests(unittest.TestCase):
+    def setUp(self):
+        self.db = TacDB()
+
+    def test_known_device(self):
+        r = g.inspect_imei(g.generate_imei("35104463"), self.db.lookup)
+        self.assertEqual(r["status"], g.STATUS_KNOWN_DEVICE)
+        self.assertEqual(r["device"]["model"], "iPhone 13")
+        self.assertEqual(r["issuer"], "BABT (UK)")
+
+    def test_any_single_digit_change_is_caught(self):
+        imei = g.generate_imei("35104463")
+        for pos in range(15):
+            for d in "0123456789":
+                if d == imei[pos]:
+                    continue
+                changed = imei[:pos] + d + imei[pos + 1:]
+                self.assertEqual(g.inspect_imei(changed)["status"], g.STATUS_INVALID, changed)
+
+    def test_unknown_tac_is_not_reported_as_known(self):
+        r = g.inspect_imei(g.generate_imei("35999999"), self.db.lookup)
+        self.assertEqual(r["status"], g.STATUS_UNKNOWN_DEVICE)
+        self.assertIn("unknown", r["headline"].lower())
+
+    def test_test_imei_and_placeholders(self):
+        r = g.inspect_imei(g.generate_imei("00123456"), self.db.lookup)
+        self.assertEqual(r["status"], g.STATUS_TEST)
+        base = "11111111111111"
+        r = g.inspect_imei(base + str(g.luhn_check_digit(base)))
+        self.assertTrue(any("placeholder" in n for n in r["notes"]))
+        base = "35104463000000"
+        r = g.inspect_imei(base + str(g.luhn_check_digit(base)), self.db.lookup)
+        self.assertTrue(any("placeholder" in n.lower() for n in r["notes"]))
+
+    def test_unrecognised_prefix_noted(self):
+        r = g.inspect_imei(g.generate_imei("77123456"))
+        self.assertEqual(r["issuer"], "")  # shown as "Unrecognised prefix" in the UI
+        self.assertEqual(r["status"], g.STATUS_UNKNOWN_DEVICE)
+
+    def test_messages_never_reveal_method(self):
+        for x in [g.generate_imei("35104463"), g.generate_imei("77123456"), "123", "35104463123456"]:
+            r = g.inspect_imei(x)
+            for text in [r["headline"]] + r["notes"]:
+                for word in ("luhn", "checksum", "check digit", "mod 10"):
+                    self.assertNotIn(word, text.lower())
+
+
 class TacDBTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

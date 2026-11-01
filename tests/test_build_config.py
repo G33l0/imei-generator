@@ -24,6 +24,11 @@ class BuildConfigTests(unittest.TestCase):
         reqs = [r.strip().split("==")[0] for r in spec()["requirements"].split(",")]
         self.assertIn("sqlite3", reqs)
         self.assertIn("kivy", reqs)
+        self.assertIn("certifi", reqs)  # HTTPS certificate store for DB updates
+
+    def test_internet_permission(self):
+        perms = [p.strip() for p in spec()["android.permissions"].split(",")]
+        self.assertIn("INTERNET", perms)
 
     def test_kivy_recipe_override_is_wired(self):
         s = spec()

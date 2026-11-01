@@ -7,3 +7,4 @@ venv/
 data/*.tmp
 *.keystore
 *.b64
+data/*.new

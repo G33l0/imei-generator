@@ -39,9 +39,19 @@ or to pretend to be a real device, is illegal in most countries.
 - Every batch is saved on the device (the most recent 100). Tap a batch to open it again, copy it in the current format, or delete it.
 
 **Check**
-- **Single**: says whether an IMEI is valid (spaces and dashes are fine) and shows the device for its TAC. **Paste** checks the clipboard straight away.
-- **Bulk**: paste a list (one per line, or separated by commas, semicolons or tabs; JSON and quoted lists work too). You get a count of valid and invalid entries, each number with its device, **Copy valid** / **Copy invalid**, and a CSV report to share. Up to 5,000 entries per check.
-- The app never shows how it verifies numbers. Messages are just "Valid IMEI" or "Invalid IMEI".
+- **Single**: checks one IMEI (spaces and dashes are fine) and shows one of four verdicts:
+  - **Valid IMEI**: well-formed, and its TAC is a known device (brand and model are shown).
+  - **Valid format, unknown device type**: well-formed, but the TAC isn't in the database.
+  - **Valid test IMEI**: starts with `00`, which is reserved for test equipment.
+  - **Invalid IMEI**: not a well-formed IMEI.
+
+  It also shows who allocated the TAC (for example BABT (UK) for `35…`) and flags placeholder-looking numbers. **Paste** checks the clipboard straight away.
+- **Bulk**: paste a list (one per line, or separated by commas, semicolons or tabs; JSON and quoted lists work too). You get counts of valid, unknown and invalid entries, each number with its device, **Copy valid** / **Copy invalid**, and a CSV report to share. Up to 5,000 entries per check.
+- **What "valid" means:** every IMEI carries a built-in consistency digit, so changing any single digit of a valid number always makes it invalid. That's how typos are caught, and it's expected, not a false positive. A valid number is only *well-formed*: whether it belongs to a real phone can only be confirmed by the network operator or the GSMA. The app never shows how it verifies numbers.
+
+**Online database updates**: on startup (and when you return to the app after 6+ hours) the app checks for a newer TAC database in the background. If one exists, it downloads it, verifies it (size, checksum, row count, data hash) and switches to it without a restart. The header shows **Online** (green dot) or **Offline**. With no connection the app keeps working on the last database it has, either the bundled one or the last downloaded update, whichever is newer. **Check → Update database** checks on demand.
+
+**Exit**: the **Exit** button (top right) or the Android back button asks before closing. On the Check and History tabs, back returns to Generate first.
 
 **Remembers your setup**: the last tab, source, brand, search, model, custom TAC, quantity, copy format and Check mode are restored when you reopen the app.
 
@@ -93,6 +103,19 @@ Then rebuild the database (see below). The official GSMA IMEI database is paid a
 restricted, so don't scrape it.
 
 ---
+
+### How online updates are published
+
+`.github/workflows/update-tac-db.yml` rebuilds the database every Monday, whenever
+`data/tac_extra.csv` changes on `main`, or when run by hand (**Actions → Update TAC
+database → Run workflow**). If the data actually changed, it commits the new
+`data/tac.sqlite` and `data/tac_manifest.json`. Phones pick the update up the next time
+the app starts. So to push new verified TACs to every installed app, add them to
+`data/tac_extra.csv` and merge. No new APK is needed.
+
+The app reads the manifest from
+`https://raw.githubusercontent.com/G33l0/imei-generator/main/data/tac_manifest.json`,
+so the repository must be public for updates to work (the URL is set in `dbupdate.py`).
 
 ## Setting up the APK with the full TAC database embedded
 
@@ -240,9 +263,11 @@ g2.kv                 layout and black/gold styling
 imei_generator.py     validation and batch generation (no Kivy dependency)
 exporters.py          copy/share formats, bulk-check parsing and reports
 userdata.py           on-device settings, favourites and history (SQLite)
+dbupdate.py           background TAC database updates (download, verify, swap)
 tacdb.py              read-only access to data/tac.sqlite (with built-in fallback)
 data/tac.sqlite       embedded TAC database (generated, committed)
 data/tac_extra.csv    your own verified TACs, merged at build time
+data/tac_manifest.json describes the current database for in-app updates
 tools/build_tac_db.py builds data/tac.sqlite from Osmocom + tac_extra.csv
 p4a-recipes/kivy/     Kivy build-recipe override (see "Build notes")
 tools/make_logo.py    renders logo, launcher icons and presplash into assets/

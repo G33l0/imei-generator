@@ -12,6 +12,8 @@
 #:set TEXT hex('#F2EDE3')
 #:set MUTED hex('#8C877D')
 #:set DANGER hex('#E5484D')
+#:set AMBER hex('#E0A33A')
+#:set ONLINE hex('#3FB97A')
 #:set INK hex('#0B0B0C')
 
 # ======================================================================
@@ -259,7 +261,7 @@
             cap: "round"
             joint: "round"
 
-<Row@BoxLayout>:
+<Row@Collapsible>:
     size_hint_y: None
     height: dp(48)
     spacing: dp(10)
@@ -377,16 +379,16 @@
             shorten: True
             shorten_from: "right"
     Label:
-        text: "VALID" if root.ok else "INVALID"
+        text: {"valid": "VALID", "unknown": "UNKNOWN", "test": "TEST"}.get(root.verdict, "INVALID")
         font_size: "10sp"
         bold: True
-        color: GOLD if root.ok else DANGER
+        color: {"valid": GOLD, "unknown": AMBER, "test": AMBER}.get(root.verdict, DANGER)
         size_hint: None, None
-        size: dp(64), dp(24)
+        size: dp(70), dp(24)
         pos_hint: {"center_y": 0.5}
         canvas.before:
             Color:
-                rgba: (GOLD if root.ok else DANGER)[:3] + [0.5]
+                rgba: {"valid": GOLD, "unknown": AMBER, "test": AMBER}.get(root.verdict, DANGER)[:3] + [0.5]
             Line:
                 rounded_rectangle: self.x, self.y, self.width, self.height, dp(12)
                 width: 1
@@ -505,13 +507,34 @@
                     text_size: self.size
                     halign: "left"
                     valign: "bottom"
-                Label:
-                    text: app.db_summary
-                    font_size: "12sp"
-                    color: MUTED
-                    text_size: self.size
-                    halign: "left"
-                    valign: "top"
+                BoxLayout:
+                    spacing: dp(6)
+                    Widget:
+                        size_hint: None, None
+                        size: dp(7), dp(7)
+                        pos_hint: {"center_y": 0.62}
+                        canvas:
+                            Color:
+                                rgba: {"online": ONLINE, "checking": AMBER, "updating": AMBER}.get(app.net_state, MUTED)
+                            Ellipse:
+                                pos: self.pos
+                                size: self.size
+                    Label:
+                        text: app.db_summary
+                        font_size: "12sp"
+                        color: MUTED
+                        text_size: self.size
+                        halign: "left"
+                        valign: "top"
+                        shorten: True
+                        shorten_from: "right"
+            GhostButton:
+                text: "Exit"
+                size_hint: None, None
+                size: dp(54), dp(32)
+                pos_hint: {"center_y": 0.5}
+                color: MUTED
+                on_release: app.confirm_exit()
 
         SegmentBar:
             Segment:
@@ -543,17 +566,18 @@
                     spacing: dp(12)
 
                     # Favourites strip (hidden when empty)
-                    ScrollView:
+                    Collapsible:
                         id: fav_strip
                         size_hint_y: None
                         height: dp(32)
-                        do_scroll_y: False
-                        bar_width: 0
-                        BoxLayout:
-                            id: fav_box
-                            size_hint_x: None
-                            width: self.minimum_width
-                            spacing: dp(8)
+                        ScrollView:
+                            do_scroll_y: False
+                            bar_width: 0
+                            BoxLayout:
+                                id: fav_box
+                                size_hint_x: None
+                                width: self.minimum_width
+                                spacing: dp(8)
 
                     Card:
                         padding: dp(14)
@@ -786,6 +810,25 @@
                                         size_hint_y: None
                                         height: self.minimum_height
                                 Widget:
+                                BoxLayout:
+                                    size_hint_y: None
+                                    height: dp(34)
+                                    spacing: dp(8)
+                                    Label:
+                                        text: app.update_status
+                                        font_size: "12sp"
+                                        color: TEXT
+                                        text_size: self.size
+                                        halign: "left"
+                                        valign: "middle"
+                                        shorten: True
+                                        shorten_from: "right"
+                                    GhostButton:
+                                        text: "Checking…" if app.net_state in ("checking", "updating") else "Update database"
+                                        size_hint_x: None
+                                        width: dp(130)
+                                        disabled: app.net_state in ("checking", "updating")
+                                        on_release: app.start_db_update(manual=True)
                                 Hint:
                                     text: app.db_info
                                 Hint:
@@ -913,8 +956,10 @@
         opacity: 0
         markup: True
         size_hint: None, None
-        size: min(root.width - dp(36), self.texture_size[0] + dp(36)), dp(46)
-        pos: (root.width - self.width) / 2, dp(22)
+        # Full-width bar: its width depends only on the screen, never on its
+        # own text (a text-dependent width caused a layout feedback loop).
+        size: root.width - dp(36), dp(46)
+        pos: dp(18), dp(22)
         font_size: "14sp"
         color: TEXT
         shorten: True
@@ -933,3 +978,53 @@
             Line:
                 rounded_rectangle: self.x, self.y, self.width, self.height, dp(14)
                 width: 1
+
+<ExitDialog@ModalView>:
+    size_hint: None, None
+    size: min(dp(320), app.root.width - dp(48)) if app.root else dp(300), dp(176)
+    auto_dismiss: True
+    background: ""
+    background_color: 0, 0, 0, 0
+    overlay_color: 0, 0, 0, 0.6
+    BoxLayout:
+        orientation: "vertical"
+        padding: dp(20)
+        spacing: dp(14)
+        canvas.before:
+            Color:
+                rgba: SURFACE
+            RoundedRectangle:
+                pos: self.pos
+                size: self.size
+                radius: [dp(18)]
+            Color:
+                rgba: GOLD[:3] + [0.5]
+            Line:
+                rounded_rectangle: self.x, self.y, self.width, self.height, dp(18)
+                width: 1
+        Label:
+            text: "Close G2 IMEI Generator?"
+            font_name: "Display"
+            bold: True
+            font_size: "17sp"
+            color: TEXT
+            size_hint_y: None
+            height: dp(26)
+            text_size: self.size
+            halign: "left"
+        Label:
+            text: "Your settings, favourites and history are saved."
+            font_size: "13sp"
+            color: MUTED
+            text_size: self.width, None
+            halign: "left"
+        BoxLayout:
+            size_hint_y: None
+            height: dp(44)
+            spacing: dp(10)
+            GhostButton:
+                text: "Cancel"
+                on_release: root.dismiss()
+            GoldButton:
+                text: "Exit"
+                on_release: root.dismiss(); app.exit_app()

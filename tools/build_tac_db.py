@@ -16,7 +16,9 @@ import argparse
 import collections
 import csv
 import datetime
+import hashlib
 import io
+import json
 import os
 import re
 import sqlite3
@@ -26,6 +28,10 @@ import urllib.request
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_OUT = os.path.join(ROOT, "data", "tac.sqlite")
 DEFAULT_EXTRA = os.path.join(ROOT, "data", "tac_extra.csv")
+DEFAULT_MANIFEST = os.path.join(ROOT, "data", "tac_manifest.json")
+# Where the app downloads updates from (see dbupdate.py).
+PUBLIC_DB_URL = "https://raw.githubusercontent.com/G33l0/imei-generator/main/data/tac.sqlite"
+MANIFEST_SCHEMA = 1
 # The https endpoint serves a mismatched certificate, so plain http is used.
 OSMOCOM_URL = "http://tacdb.osmocom.org/export/tacdb.csv"
 OSMOCOM_LICENSE = "Osmocom TAC database, CC-BY-SA 3.0, (c) Harald Welte and contributors"
@@ -129,14 +135,18 @@ def build(rows, out_path, sources):
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     con = sqlite3.connect(tmp)
     con.executescript(SCHEMA)
+    digest = hashlib.sha256()
     for tac in sorted(records):
         r = records[tac]
         brand = canonical[r["brand"].lower()]
         model = display_model(brand, r["model"], r["aka"])
         esim = r["esim"] if r["esim"] is not None else is_esim(brand, model, r["aka"])
-        con.execute("INSERT INTO tac VALUES (?,?,?,?,?,?)",
-                    (tac, brand, model, r["aka"], int(bool(esim)), r["source"]))
+        row = (tac, brand, model, r["aka"], int(bool(esim)), r["source"])
+        con.execute("INSERT INTO tac VALUES (?,?,?,?,?,?)", row)
+        digest.update(("\x1f".join(map(str, row)) + "\n").encode("utf-8"))
     meta = {
+        "data_hash": digest.hexdigest(),
+        "schema": str(MANIFEST_SCHEMA),
         "built": datetime.date.today().isoformat(),
         "sources": ", ".join(sources),
         "license": OSMOCOM_LICENSE if "osmocom" in sources else "",
@@ -150,6 +160,26 @@ def build(rows, out_path, sources):
     return meta
 
 
+def write_manifest(db_path, meta, manifest_path):
+    """Describe the database for in-app updates (dbupdate.py)."""
+    with open(db_path, "rb") as f:
+        blob = f.read()
+    manifest = {
+        "schema": MANIFEST_SCHEMA,
+        "built": meta["built"],
+        "count": int(meta["count"]),
+        "data_hash": meta["data_hash"],
+        "sha256": hashlib.sha256(blob).hexdigest(),
+        "size": len(blob),
+        "url": PUBLIC_DB_URL,
+        "sources": meta["sources"],
+    }
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2)
+        f.write("\n")
+    return manifest
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--csv", help="local Osmocom CSV instead of downloading")
@@ -157,6 +187,11 @@ def main(argv=None):
     p.add_argument("--no-osmocom", action="store_true", help="only use the extra CSV")
     p.add_argument("--extra", default=DEFAULT_EXTRA)
     p.add_argument("--out", default=DEFAULT_OUT)
+    p.add_argument("--manifest", default=DEFAULT_MANIFEST,
+                   help="where to write the update manifest ('' to skip)")
+    p.add_argument("--keep-if-unchanged", action="store_true",
+                   help="leave the existing database untouched when its data is identical "
+                        "(used by the scheduled update workflow)")
     a = p.parse_args(argv)
 
     rows, sources = [], []
@@ -178,7 +213,23 @@ def main(argv=None):
     if not rows:
         sys.exit("No TAC rows found")
 
-    meta = build(rows, a.out, sources)
+    old_meta = {}
+    if a.keep_if_unchanged and os.path.exists(a.out):
+        try:
+            c = sqlite3.connect(a.out)
+            old_meta = dict(c.execute("SELECT key, value FROM meta"))
+            c.close()
+        except sqlite3.Error:
+            old_meta = {}
+    tmp_out = a.out + ".new"
+    meta = build(rows, tmp_out, sources)
+    if a.keep_if_unchanged and old_meta.get("data_hash") == meta["data_hash"]:
+        os.remove(tmp_out)
+        print("TAC data unchanged (%s); keeping %s" % (meta["data_hash"][:12], os.path.relpath(a.out)))
+        return
+    os.replace(tmp_out, a.out)
+    if a.manifest:
+        write_manifest(a.out, meta, a.manifest)
     con = sqlite3.connect(a.out)
     brands = con.execute("SELECT count(DISTINCT brand) FROM tac").fetchone()[0]
     esim = con.execute("SELECT count(*) FROM tac WHERE esim = 1").fetchone()[0]
