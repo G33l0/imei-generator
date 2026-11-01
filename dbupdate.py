@@ -118,7 +118,7 @@ def fetch_manifest(url=None, timeout=MANIFEST_TIMEOUT):
     return manifest
 
 
-def _download(url, dest, expected_size, timeout=DOWNLOAD_TIMEOUT):
+def _download(url, dest, expected_size, timeout=DOWNLOAD_TIMEOUT, progress=None):
     h = hashlib.sha256()
     total = 0
     with _open(url, timeout) as r, open(dest, "wb") as f:
@@ -131,6 +131,8 @@ def _download(url, dest, expected_size, timeout=DOWNLOAD_TIMEOUT):
                 raise ValueError("download larger than expected")
             h.update(chunk)
             f.write(chunk)
+            if progress and expected_size:
+                progress(min(1.0, total / expected_size))
     if expected_size and total != expected_size:
         raise ValueError("download size mismatch (%d != %d)" % (total, expected_size))
     return h.hexdigest()
@@ -147,9 +149,10 @@ def verify_database(path, manifest):
     return meta
 
 
-def check_and_update(current_meta, user_dir, manifest_url=None):
+def check_and_update(current_meta, user_dir, manifest_url=None, progress=None):
     """Check online for a newer database and install it into ``user_dir``.
 
+    ``progress(fraction)`` is called during the download (from this thread).
     Never raises: returns an UpdateResult.
     """
     try:
@@ -169,7 +172,9 @@ def check_and_update(current_meta, user_dir, manifest_url=None):
     fd, tmp = tempfile.mkstemp(prefix="tac_", suffix=".download", dir=user_dir)
     os.close(fd)
     try:
-        digest = _download(url, tmp, int(manifest.get("size") or 0))
+        if progress:
+            progress(0.0)
+        digest = _download(url, tmp, int(manifest.get("size") or 0), progress=progress)
         if manifest.get("sha256") and digest != manifest["sha256"]:
             raise ValueError("checksum mismatch")
         meta = verify_database(tmp, manifest)

@@ -51,6 +51,11 @@ or to pretend to be a real device, is illegal in most countries.
 
 **Online database updates**: on startup (and when you return to the app after 6+ hours) the app checks for a newer TAC database in the background. If one exists, it downloads it, verifies it (size, checksum, row count, data hash) and switches to it without a restart. The header shows **Online** (green dot) or **Offline**. With no connection the app keeps working on the last database it has, either the bundled one or the last downloaded update, whichever is newer. **Check → Update database** checks on demand.
 
+**Animations**:
+- **Boot:** the app picks up from the black Android splash screen. A gold ring draws around the logo, the title rises in, and "22,524 devices ready" confirms the database loaded. Then the screen glides up into place (about 1.6 seconds).
+- **Database check:** a thin gold line sweeps along the top while the app checks for updates, then shows real download progress. The header's status dot pulses while it works.
+- **Update installed:** a banner slides down with a gold tick drawn stroke by stroke, and the header's device count rolls up to the new total.
+
 **Exit**: the **Exit** button (top right) or the Android back button asks before closing. On the Check and History tabs, back returns to Generate first.
 
 **Remembers your setup**: the last tab, source, brand, search, model, custom TAC, quantity, copy format and Check mode are restored when you reopen the app.

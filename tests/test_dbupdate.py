@@ -65,14 +65,14 @@ class UpdateTests(unittest.TestCase):
             json.dump(manifest, f)
         return manifest
 
-    def run_update(self, base, local_db=None):
+    def run_update(self, base, local_db=None, progress=None):
         manifest_url = base + "tac_manifest.json"
         m = json.load(open(os.path.join(self.remote, "tac_manifest.json")))
         m["url"] = base + "tac.sqlite"
         with open(os.path.join(self.remote, "tac_manifest.json"), "w") as f:
             json.dump(m, f)
         return dbupdate.check_and_update(dbupdate.read_meta(local_db or self.local_db),
-                                         self.user, manifest_url)
+                                         self.user, manifest_url, progress=progress)
 
     def test_downloads_newer_data_and_app_prefers_it(self):
         self.publish(ROWS_B, "2026-06-01")
@@ -86,6 +86,16 @@ class UpdateTests(unittest.TestCase):
         with serve(self.remote) as base:
             r2 = self.run_update(base, local_db=path)
         self.assertEqual(r2.status, "current")
+
+    def test_progress_reported_during_download(self):
+        self.publish(ROWS_B, "2026-06-01")
+        seen = []
+        with serve(self.remote) as base:
+            r = self.run_update(base, progress=seen.append)
+        self.assertEqual(r.status, "updated")
+        self.assertEqual(seen[0], 0.0)
+        self.assertEqual(seen[-1], 1.0)
+        self.assertEqual(seen, sorted(seen))
 
     def test_same_data_is_current(self):
         self.publish(ROWS_A, "2026-01-01")
